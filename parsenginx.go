@@ -268,13 +268,13 @@ func statusinfile(path string) int {
 	return counts
 }
 
-func ParseStatus(jobs <-chan string, results chan<- int, wg *sync.WaitGroup, telephone *regexp.Regexp) {
+func ParseStatus(jobs <-chan string, results chan<- int, wg *sync.WaitGroup, responsecode *regexp.Regexp) {
 	// Decreasing internal counter for wait-group as soon as goroutine finishes
 	defer wg.Done()
 	// eventually I want to have a []string channel to work on a chunk of lines not just one line of text
 	for j := range jobs {
-		if telephone.MatchString(j) {
-			ResponseStatus := strings.TrimSpace(telephone.FindString(j))
+		if responsecode.MatchString(j) {
+			ResponseStatus := strings.TrimSpace(responsecode.FindString(j))
 
 			if ResponseStatus == "200" {
 				statuscount.Twohundred++
@@ -292,12 +292,27 @@ func main() {
 	configfilepath := "config.json"
 	resultfile := "results.json"
 	datafile := "sample.txt"
-
-	for {
-		checkconf(configfilepath, resultfile, datafile)
-		go updatedata(configfilepath, resultfile, datafile)
-		time.Sleep(30 * time.Second)
+	i := 1 // 1= old , 2= use go routines
+	checkconf(configfilepath, resultfile, datafile)
+	switch i {
+	case 1:
+		for {
+			updatedata(configfilepath, resultfile, datafile)
+			time.Sleep(30 * time.Second)
+		}
+	case 2:
+		// not completed yet
+		file, err := os.Open(datafile)
+		if err != nil {
+			fmt.Println(err)
+		}
+		defer file.Close()
+		input, err := ioutil.ReadAll(file)
+		//fmt.Print(string(input))
+		totlacount := statusinfile(string(input))
+		fmt.Println(totlacount)
 	}
+
 }
 
 /**
