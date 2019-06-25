@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -86,7 +88,7 @@ func getlaststat(filename string) configfile {
 	return obj
 }
 
-func newfileinfo(filepath string) int64 {
+func fileinfo(filepath string) int64 {
 	stat, err := os.Stat(filepath)
 	if err != nil {
 		fmt.Println(err)
@@ -108,9 +110,9 @@ func check(e error) {
 
 func resultupdate(logLine string) {
 	fmt.Println(logLine)
-	response_status_reg := regexp.MustCompile(`( [0-9]{1,3} )`)
-	response_status_list := response_status_reg.FindAllString(logLine, -1)
-	for _, element := range response_status_list {
+	responseStatusReg := regexp.MustCompile(`( [0-9]{1,3} )`)
+	responseStatusList := responseStatusReg.FindAllString(logLine, -1)
+	for _, element := range responseStatusList {
 		element = strings.TrimSpace(element)
 		if element == "200" {
 			statuscount.Twohundred++
@@ -154,7 +156,7 @@ func updatedata(configfilepath string, resultfile string, datafile string) {
 	print("Old result stat")
 	fmt.Println(resultstat)
 
-	newfilesize := newfileinfo(datafile)
+	newfilesize := fileinfo(datafile)
 	fmt.Println("New file size:", newfilesize)
 	if oldfilesize != newfilesize {
 		diff := newfilesize - oldfilesize
@@ -221,13 +223,78 @@ func checkconf(configfilepath string, resultfile string, datafile string) {
 		writejsondata(resultfile, res)
 	}
 }
+func statusinfile(path string) int {
+	file := strings.NewReader(path)
+
+	var responsecode = regexp.MustCompile(`( [0-9]{1,3} )`)
+
+	// do I need buffered channels here?
+	jobs := make(chan string)
+	results := make(chan int)
+
+	// I think we need a wait group, not sure.
+	wg := new(sync.WaitGroup)
+
+	// start up some workers that will block and wait?
+	for w := 1; w <= 3; w++ {
+		wg.Add(1)
+		go ParseStatus(jobs, results, wg, responsecode)
+	}
+
+	// Go over a file line by line and queue up a ton of work
+	go func() {
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			// Later I want to create a buffer of lines, not just line-by-line here ...
+			jobs <- scanner.Text()
+		}
+		close(jobs)
+	}()
+
+	// Now collect all the results...
+	// But first, make sure we close the result channel when everything was processed
+	go func() {
+		wg.Wait()
+		fmt.Println(statuscount)
+		close(results)
+	}()
+
+	// Add up the results from the results channel.
+	counts := 0
+	for v := range results {
+		counts += v
+	}
+
+	return counts
+}
+
+func ParseStatus(jobs <-chan string, results chan<- int, wg *sync.WaitGroup, telephone *regexp.Regexp) {
+	// Decreasing internal counter for wait-group as soon as goroutine finishes
+	defer wg.Done()
+	// eventually I want to have a []string channel to work on a chunk of lines not just one line of text
+	for j := range jobs {
+		if telephone.MatchString(j) {
+			ResponseStatus := strings.TrimSpace(telephone.FindString(j))
+
+			if ResponseStatus == "200" {
+				statuscount.Twohundred++
+			}
+			if ResponseStatus == "500" {
+
+				statuscount.Fivehundred++
+			}
+			results <- 1
+		}
+	}
+}
+
 func main() {
 	configfilepath := "config.json"
 	resultfile := "results.json"
 	datafile := "sample.txt"
 
 	for {
-		go checkconf(configfilepath, resultfile, datafile)
+		checkconf(configfilepath, resultfile, datafile)
 		go updatedata(configfilepath, resultfile, datafile)
 		time.Sleep(30 * time.Second)
 	}
